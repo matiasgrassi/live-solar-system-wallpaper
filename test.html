@@ -1,1 +1,214 @@
-test
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Solar System Live Preview</title>
+    <style>
+        body { margin: 0; background: #050505; color: white; font-family: sans-serif; overflow: hidden; }
+        canvas { display: block; }
+        #controls { position: absolute; top: 10px; left: 10px; background: rgba(0,0,0,0.7); padding: 15px; border-radius: 8px; pointer-events: auto; }
+        .legend-text { font-size: 14px; margin-bottom: 5px; display: flex; align-items: center; }
+        .dot { width: 10px; height: 10px; border-radius: 50%; margin-right: 10px; }
+    </style>
+</head>
+<body>
+
+<div id="controls">
+    <h3>Live Wallpaper Preview</h3>
+    <div class="legend-text"><div class="dot" style="background: green;"></div> Solstice Line</div>
+    <div class="legend-text"><div class="dot" style="background: red;"></div> Equinox Line</div>
+    <div class="legend-text"><div class="dot" style="background: cyan;"></div> Spacecraft Trajectory</div>
+    <p id="date-display"></p>
+</div>
+
+<canvas id="solarCanvas"></canvas>
+
+<script>
+/**
+ * REPLICATING KOTLIN LOGIC IN JAVASCRIPT
+ */
+
+const canvas = document.getElementById('solarCanvas');
+const ctx = canvas.getContext('2d');
+
+// --- Configuration (Mirroring your Kotlin Variables) ---
+const config = {
+    rotate90: false,
+    southHemis: true,
+    userZoom: 100,
+    userVOffset: 0,
+    userHOffset: 0,
+    showSolsticeEquinox: true,
+    showSpacecraft: true
+};
+
+// Planet Data (Triple in Kotlin -> Object in JS)
+const planets = [
+    { name: "Mercury", semiMajor: 36.2, size: 4, e: 0.2056, peri: 77.60, color: '#A5A5A5' },
+    { name: "Venus",   semiMajor: 67,   size: 6, e: 0,      peri: 0,     color: '#E3BB76' },
+    { name: "Earth",   semiMajor: 93,   size: 6, e: 0,      peri: 0,     color: '#2271B3' },
+    { name: "Mars",    semiMajor: 141.4,size: 5, e: 0.0934, peri: 336.54, color: '#E27B58' },
+    { name: "Jupiter", semiMajor: 483.6,size: 20,e: 0.049,  peri: 75.31, color: '#D39C7E' }
+];
+
+// Galilean Moons (Periods in seconds)
+const periodIoSec = 1.769 * 24 * 3600;
+const moons = [
+    { name: "Io",       dist: 60, color: 'yellow', period: periodIoSec },
+    { name: "Europa",   dist: 85, color: 'cyan',   period: periodIoSec * 2 },
+    { name: "Ganymede", dist: 120, color: 'white',  period: periodIoSec * 4 },
+    { name: "Callisto", dist: 160, color: 'gray',   period: 16.7 * 24 * 3600 }
+];
+
+// Mock CSV Data (In reality, you'd fetch your CSV file)
+const mockTodayAngles = {
+    "Mercury": 45, "Venus": 120, "Earth": 200, "Mars": 300, "Jupiter": 10,
+    "Moon": 15, "Io": 90, "Europa": 180, "Ganymede": 270, "Callisto": 0,
+    "JUICE_angle_deg": 15, "JUICE_dist_AU": 0.8,
+    "Clipper_angle_deg": 25, "Clipper_dist_AU": 1.2
+};
+
+function resize() {
+    canvas.width = window.innerWidth;
+    canvas.height = window.innerHeight;
+}
+window.addEventListener('resize', resize);
+resize();
+
+function toRadians(deg) { return deg * (Math.PI / 180); }
+
+function draw() {
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    
+    const widthTarget = canvas.width;
+    const heightTarget = canvas.height;
+    const rotationOffset = config.rotate90 ? -90 : 0;
+    const signHemis = config.southHemis ? 1 : -1;
+    
+    // Scaling Logic
+    const zoomFactor = (1 + config.userZoom / 50);
+    const dynamicScaleFactor = (widthTarget / 1080) * zoomFactor;
+    const orbitScale = (1500 / 1080) * dynamicScaleFactor;
+    
+    const centerX = widthTarget * (1 + config.userHOffset / 100) / 2;
+    const centerY = heightTarget * (1 - config.userVOffset / 100 - 0.08) / 2;
+
+    // Time calculations
+    const now = new Date();
+    const secondsSinceMidnight = now.getUTCHours() * 3600 + now.getUTCMinutes() * 60 + now.getUTCSeconds();
+
+    // 1. Draw Solstice/Equinox Lines
+    if (config.showSolsticeEquinox) {
+        const angleEquinox = toRadians(179 + rotationOffset);
+        const lineLen = (93 * dynamicScaleFactor) + 100;
+        
+        ctx.lineWidth = 2 * dynamicScaleFactor;
+        
+        // Equinox (Red)
+        ctx.strokeStyle = 'rgba(255, 0, 0, 0.3)';
+        ctx.beginPath();
+        ctx.moveTo(centerX - Math.cos(angleEquinox)*lineLen, centerY - Math.sin(angleEquinox)*lineLen);
+        ctx.lineTo(centerX + Math.cos(angleEquinox)*lineLen, centerY + Math.sin(angleEquinox)*lineLen);
+        ctx.stroke();
+
+        // Solstice (Green)
+        ctx.strokeStyle = 'rgba(0, 255, 0, 0.3)';
+        ctx.beginPath();
+        const angleSol = angleEquinox + Math.PI/2;
+        ctx.moveTo(centerX - Math.cos(angleSol)*lineLen, centerY - Math.sin(angleSol)*lineLen);
+        ctx.lineTo(centerX + Math.cos(angleSol)*lineLen, centerY + Math.sin(angleSol)*lineLen);
+        ctx.stroke();
+    }
+
+    // 2. Draw Sun
+    ctx.fillStyle = "yellow";
+    ctx.shadowBlur = 20;
+    ctx.shadowColor = "orange";
+    ctx.beginPath();
+    ctx.arc(centerX, centerY, 15 * dynamicScaleFactor, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.shadowBlur = 0;
+
+    let earthPos = {x: 0, y: 0};
+    let jupiterPos = {x: 0, y: 0};
+
+    // 3. Draw Planets & Orbits
+    planets.forEach(p => {
+        const angleDeg = mockTodayAngles[p.name] || 0;
+        const angleRad = toRadians(angleDeg + rotationOffset);
+        const a = p.semiMajor * orbitScale;
+        const e = p.e;
+        const peri = toRadians(p.peri + rotationOffset);
+
+        // Draw Elliptical Orbit Path
+        ctx.strokeStyle = 'rgba(200, 200, 200, 0.2)';
+        ctx.beginPath();
+        for (let d = 0; d <= 360; d += 2) {
+            const theta = toRadians(d + rotationOffset);
+            const r = a * (1 - e * e) / (1 + e * Math.cos(theta - peri));
+            const ox = centerX + signHemis * r * Math.cos(theta);
+            const oy = centerY + r * Math.sin(theta);
+            if (d === 0) ctx.moveTo(ox, oy); else ctx.lineTo(ox, oy);
+        }
+        ctx.closePath();
+        ctx.stroke();
+
+        // Calculate Planet Position
+        const currentR = a * (1 - e * e) / (1 + e * Math.cos(angleRad - peri));
+        const px = centerX + signHemis * currentR * Math.cos(angleRad);
+        const py = centerY + currentR * Math.sin(angleRad);
+
+        if (p.name === "Earth") earthPos = {x: px, y: py};
+        if (p.name === "Jupiter") jupiterPos = {x: px, y: py};
+
+        // Draw Planet Body
+        ctx.fillStyle = p.color;
+        ctx.beginPath();
+        ctx.arc(px, py, p.size * dynamicScaleFactor, 0, Math.PI * 2);
+        ctx.fill();
+    });
+
+    // 4. Draw Galilean Moons (Animated)
+    moons.forEach(m => {
+        const baseAngle = mockTodayAngles[m.name] || 0;
+        const deltaAngle = (360 / m.period) * secondsSinceMidnight;
+        const moonAngleRad = toRadians(baseAngle + deltaAngle + rotationOffset);
+        const moonDist = m.dist * dynamicScaleFactor;
+
+        const mx = jupiterPos.x + signHemis * moonDist * Math.cos(moonAngleRad);
+        const my = jupiterPos.y + moonDist * Math.sin(moonAngleRad);
+
+        // Moon Orbit
+        ctx.strokeStyle = 'rgba(200, 200, 200, 0.1)';
+        ctx.beginPath();
+        ctx.arc(jupiterPos.x, jupiterPos.y, moonDist, 0, Math.PI*2);
+        ctx.stroke();
+
+        // Moon Body
+        ctx.fillStyle = m.color;
+        ctx.beginPath();
+        ctx.arc(mx, my, 3 * dynamicScaleFactor, 0, Math.PI * 2);
+        ctx.fill();
+    });
+
+    // 5. Spacecraft (JUICE Example)
+    if (config.showSpacecraft) {
+        const auToPixels = 93 * orbitScale;
+        const jAngle = toRadians(mockTodayAngles["JUICE_angle_deg"] + rotationOffset);
+        const jDist = mockTodayAngles["JUICE_dist_AU"] * auToPixels;
+        
+        const jx = centerX + signHemis * jDist * Math.cos(jAngle);
+        const jy = centerY + jDist * Math.sin(jAngle);
+
+        ctx.fillStyle = "cyan";
+        ctx.fillRect(jx - 4, jy - 4, 8, 8); // Simple square for spacecraft
+    }
+
+    requestAnimationFrame(draw);
+}
+
+draw();
+</script>
+</body>
+</html>
